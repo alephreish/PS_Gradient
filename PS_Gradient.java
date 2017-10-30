@@ -33,6 +33,9 @@ public class PS_Gradient implements PlugIn {
 
 	private Line rTube = null;
 	private Line lTube = null;
+	public static final double TOLERANCE_WAND   = 20;
+	public static final double TOLERANCE_MAXIMA = 5;
+
 
 	/**
 	 * The main program entry.
@@ -45,7 +48,7 @@ public class PS_Gradient implements PlugIn {
 		ImagePlus curImg = WindowManager.getCurrentImage();
 		ImagePlus img = new Duplicator().run(curImg);
 		ImageProcessor ip = img.getProcessor();
-		IJ.log("Image: " + img.getTitle());
+		//IJ.log("Image: " + img.getTitle());
 		
 		if (getTubes()) {
 			ip.invert();
@@ -59,11 +62,24 @@ public class PS_Gradient implements PlugIn {
 			bkgdImg.close();
 
 			ImageProcessor ip2 = img2.getProcessor();
-			PlotProfile("Left tube",  ip2, lTube);
-			PlotProfile("Right tube", ip2, rTube);
+			
+			Plot profile1 = new Plot("Left tube", "Distance", "Value");
+			PlotProfile(ip2, lTube, profile1, Plot.LINE);
+			showPlot(profile1);
+
+			Plot profile2 = new Plot("Right tube", "Distance", "Value");
+			PlotProfile(ip2, rTube, profile2, Plot.LINE);
+			showPlot(profile2);
+			
 			img2.close();
 		}
 		img.close();
+	}
+
+	private void showPlot(Plot profile) {
+		profile.setLimitsToFit(true);
+		profile.draw();
+		profile.show();
 	}
 
 	private boolean getTubes() {
@@ -94,11 +110,11 @@ public class PS_Gradient implements PlugIn {
 	private Color getBkgd(ImageProcessor ip) {
 		int midX = (lTube.x1 + lTube.x2 + rTube.x1 + rTube.x2) / 4;
 		int midY = (lTube.y1 + lTube.y2 + rTube.y1 + rTube.y2) / 4;
-		IJ.log("MidX: " + Integer.toString(midX));
-		IJ.log("MidY: " + Integer.toString(midY));
+		//IJ.log("MidX: " + Integer.toString(midX));
+		//IJ.log("MidY: " + Integer.toString(midY));
 
 		Wand wand = new Wand(ip);
-		wand.autoOutline(midX, midY, 20.0, Wand.FOUR_CONNECTED);
+		wand.autoOutline(midX, midY, this.TOLERANCE_WAND, Wand.FOUR_CONNECTED);
 
 		PolygonRoi bkgdRoi = new PolygonRoi(wand.xpoints, wand.ypoints, wand.npoints, Roi.TRACED_ROI);
 
@@ -122,32 +138,38 @@ public class PS_Gradient implements PlugIn {
 		return new Color(rSum/count, gSum/count, bSum/count);
 	}
 
-	private void PlotProfile(String title, ImageProcessor ip, Line Tube) {
+	private void PlotProfile(ImageProcessor ip, Line Tube, Plot profile, int shape) {
 		Point[] Pts = Tube.getContainedPoints();
-		double[] distance   = new double[Pts.length];
-		double[] rIntensity = new double[Pts.length];
-		double[] gIntensity = new double[Pts.length];
-		double[] bIntensity = new double[Pts.length];
+		double[]   distances   = new double[Pts.length];
+		double[][] intensities = new double[3][Pts.length];
+		Color[] colors = new Color[]{ Color.CYAN, Color.MAGENTA, Color.YELLOW };
+		double x0 = Pts[0].x;
+		double y0 = Pts[0].y;
 		int count = 0;
 		for (Point p : Pts) {
 			int[] rgb = new int[3];
 			ip.getPixel(p.x, p.y, rgb);
-			distance[count]   = (double)p.y;
-			rIntensity[count] = (double)rgb[0];
-			gIntensity[count] = (double)rgb[1];
-			bIntensity[count] = (double)rgb[2];
+			distances[count]   = Math.sqrt(Math.pow(x0 - p.x, 2.0) + Math.pow(y0 - p.y, 2.0));
+			for (int i = 0; i < 3; i++) {
+				intensities[i][count] = (double)rgb[i];
+			}
 			count++;
 		}
-		Plot profile = new Plot(title, "Distance", "Value");
-		profile.setColor(Color.CYAN);
-		profile.addPoints(distance, rIntensity, Plot.LINE);
-		profile.setColor(Color.MAGENTA);
-		profile.addPoints(distance, gIntensity, Plot.LINE);
-		profile.setColor(Color.YELLOW);
-		profile.addPoints(distance, bIntensity, Plot.LINE);
-		profile.setLimitsToFit(true);
-		profile.draw();
-		profile.show();
+		for (int i = 0; i < 3; i++) {
+			profile.setColor(colors[i]);
+			profile.addPoints(distances, intensities[i], Plot.LINE);
+
+			int[] maxima = MaximumFinder.findMaxima(intensities[i], this.TOLERANCE_MAXIMA, true);
+			double[] maxD = new double[maxima.length];
+			double[] maxI = new double[maxima.length];
+			for (int j = 0; j < maxima.length; j++) {
+				int maximum = maxima[j];
+				maxD[j] = distances[maximum];
+				maxI[j] = intensities[i][maximum];
+			}
+			profile.setColor(Color.BLACK);
+			profile.addPoints(maxD, maxI, Plot.CIRCLE);
+		}
 	}
 
 }
