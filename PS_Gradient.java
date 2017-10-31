@@ -36,7 +36,6 @@ public class PS_Gradient implements PlugIn {
 	public static final double TOLERANCE_WAND   = 20;
 	public static final double TOLERANCE_MAXIMA = 5;
 
-
 	/**
 	 * The main program entry.
 	 * <p>
@@ -45,23 +44,24 @@ public class PS_Gradient implements PlugIn {
 	 * @param  arg  plugin arguments
 	 */
 	public void run(String arg) {
-		ImagePlus curImg = WindowManager.getCurrentImage();
-		ImagePlus img = new Duplicator().run(curImg);
-		ImageProcessor ip = img.getProcessor();
-		//IJ.log("Image: " + img.getTitle());
+		ImagePlus curImp = WindowManager.getCurrentImage();
+		if (curImp == null) return;
+		ImagePlus imp = new Duplicator().run(curImp);
+		ImageProcessor ip = imp.getProcessor();
+		//IJ.log("Image: " + imp.getTitle());
 		
 		if (getTubes()) {
 			ip.invert();
-			ImagePlus bkgdImg = new Duplicator().run(img);
-			ImageProcessor bkgdIp = bkgdImg.getProcessor();
+			ImagePlus bkgdImp = new Duplicator().run(imp);
+			ImageProcessor bkgdIp = bkgdImp.getProcessor();
 			bkgdIp.setColor(getBkgd(ip));
 			bkgdIp.fill();
 			ImageCalculator ic = new ImageCalculator();
-			ImagePlus img2 = ic.run("Subtract create", img, bkgdImg);
-			//img2.show();
-			bkgdImg.close();
+			ImagePlus imp2 = ic.run("Subtract create", imp, bkgdImp);
+			//imp2.show();
+			bkgdImp.close();
 
-			ImageProcessor ip2 = img2.getProcessor();
+			ImageProcessor ip2 = imp2.getProcessor();
 			
 			Plot profile1 = new Plot("Left tube", "Distance", "Value");
 			PlotProfile(ip2, lTube, profile1, Plot.LINE);
@@ -71,9 +71,9 @@ public class PS_Gradient implements PlugIn {
 			PlotProfile(ip2, rTube, profile2, Plot.LINE);
 			showPlot(profile2);
 			
-			img2.close();
+			imp2.close();
 		}
-		img.close();
+		imp.close();
 	}
 
 	private void showPlot(Plot profile) {
@@ -91,12 +91,10 @@ public class PS_Gradient implements PlugIn {
 					IJ.error("PS Gradient", "More than two line ROIs found");
 					return false;
 				}
-				if (count == 0) {
+				if (count == 0)
 					lTube = (Line)roi;
-				}
-				else {
+				else
 					rTube = (Line)roi;
-				}
 				count++;
 			}
 		}
@@ -149,7 +147,9 @@ public class PS_Gradient implements PlugIn {
 		for (Point p : Pts) {
 			int[] rgb = new int[3];
 			ip.getPixel(p.x, p.y, rgb);
-			distances[count]   = Math.sqrt(Math.pow(x0 - p.x, 2.0) + Math.pow(y0 - p.y, 2.0));
+			double dx = x0 - p.x;
+			double dy = y0 - p.y;
+			distances[count] = Math.sqrt(dx*dx + dy*dy);
 			for (int i = 0; i < 3; i++) {
 				intensities[i][count] = (double)rgb[i];
 			}
