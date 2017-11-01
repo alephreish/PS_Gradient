@@ -28,6 +28,13 @@ import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
 import java.lang.Math.*;
+import java.util.Vector;
+import java.util.List;
+import java.util.Collections;
+import java.util.ArrayList;
+
+import jMEF.*;
+import Tools.KMeans;
 
 public class PS_Gradient implements PlugIn {
 
@@ -35,6 +42,7 @@ public class PS_Gradient implements PlugIn {
 	private Line lTube = null;
 	public static final double TOLERANCE_WAND   = 20;
 	public static final double TOLERANCE_MAXIMA = 5;
+	public static final int COLOR_NUM = 2;
 
 	/**
 	 * The main program entry.
@@ -44,6 +52,8 @@ public class PS_Gradient implements PlugIn {
 	 * @param  arg  plugin arguments
 	 */
 	public void run(String arg) {
+		MixtureModel f = new MixtureModel(3);
+		f.EF = new UnivariateGaussianFixedVariance(25);
 		ImagePlus curImp = WindowManager.getCurrentImage();
 		if (curImp == null) return;
 		ImagePlus imp = new Duplicator().run(curImp);
@@ -58,7 +68,6 @@ public class PS_Gradient implements PlugIn {
 			bkgdIp.fill();
 			ImageCalculator ic = new ImageCalculator();
 			ImagePlus imp2 = ic.run("Subtract create", imp, bkgdImp);
-			//imp2.show();
 			bkgdImp.close();
 
 			ImageProcessor ip2 = imp2.getProcessor();
@@ -108,8 +117,6 @@ public class PS_Gradient implements PlugIn {
 	private Color getBkgd(ImageProcessor ip) {
 		int midX = (lTube.x1 + lTube.x2 + rTube.x1 + rTube.x2) / 4;
 		int midY = (lTube.y1 + lTube.y2 + rTube.y1 + rTube.y2) / 4;
-		//IJ.log("MidX: " + Integer.toString(midX));
-		//IJ.log("MidY: " + Integer.toString(midY));
 
 		Wand wand = new Wand(ip);
 		wand.autoOutline(midX, midY, this.TOLERANCE_WAND, Wand.FOUR_CONNECTED);
@@ -144,18 +151,30 @@ public class PS_Gradient implements PlugIn {
 		double x0 = Pts[0].x;
 		double y0 = Pts[0].y;
 		int count = 0;
+		List<Double> sample = new ArrayList<Double>();
 		for (Point p : Pts) {
 			int[] rgb = new int[3];
 			ip.getPixel(p.x, p.y, rgb);
 			double dx = x0 - p.x;
 			double dy = y0 - p.y;
 			distances[count] = Math.sqrt(dx*dx + dy*dy);
-			for (int i = 0; i < 3; i++) {
+			for (int i = 0; i < this.COLOR_NUM; i++) {
 				intensities[i][count] = (double)rgb[i];
 			}
+			sample.addAll(Collections.nCopies(rgb[0], distances[count]));
 			count++;
 		}
-		for (int i = 0; i < 3; i++) {
+		PVector[] points = new PVector[sample.size()];
+		count = 0;
+		IJ.log(String.format("Sample size %d", sample.size()));
+		for (Double s : sample) {
+			PVector point = new PVector(1);
+			point.array[0] = s;
+			points[count] = point;
+			count++;
+		}
+
+		for (int i = 0; i < this.COLOR_NUM; i++) {
 			profile.setColor(colors[i]);
 			profile.addPoints(distances, intensities[i], Plot.LINE);
 
@@ -169,6 +188,37 @@ public class PS_Gradient implements PlugIn {
 			}
 			profile.setColor(Color.BLACK);
 			profile.addPoints(maxD, maxI, Plot.CIRCLE);
+		}
+		
+		Vector<PVector>[] clusters = KMeans.run(points, 4);
+
+		MixtureModel mmef;
+		mmef = BregmanSoftClustering.initialize(clusters, new UnivariateGaussian());
+		mmef = BregmanSoftClustering.run(points, mmef);
+		PlotGauss(profile, distances, mmef, sample.size());
+	}
+
+	private double Gauss(double x, double w, double a, double s2) {
+		double dx = x - a;
+		return w * Math.exp( - dx*dx / s2 / 2 ) / Math.sqrt(2 * Math.PI * s2);
+	}
+
+	private void PlotGauss(Plot profile, double[] distances, MixtureModel mm, int scale) {
+		for (int i = 0; i < mm.size; i++) {
+			PVector params = (PVector)mm.param[i];
+			double w  = scale * mm.weight[i];
+			double a  = params.array[0];
+			double s2 = params.array[1];
+			int count = 0;
+			double[] intensities = new double[distances.length];
+			for (int j = 0; j < distances.length; j++) {
+				intensities[j] = Gauss(distances[j], w, a, s2);
+			}
+			IJ.log(String.format("Component %d", i));
+			IJ.log(String.format("Weight %f", w));
+			IJ.log(String.format("Points %d", distances.length));
+			profile.setColor(Color.BLACK);
+			profile.addPoints(distances, intensities, Plot.LINE);
 		}
 	}
 

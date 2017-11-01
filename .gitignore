@@ -1,2 +1,7 @@
 compile.sh
 *.class
+*.jar
+test.*
+jMEF
+Tools
+Tutorials
