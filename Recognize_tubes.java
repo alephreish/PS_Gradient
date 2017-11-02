@@ -54,8 +54,12 @@ public class Recognize_tubes implements PlugIn {
 		ImageStatistics stats = imp.getRawStatistics();
 		MyParticleAnalyzer partAnalyzers = new MyParticleAnalyzer(stats.area, this.AREA_FRACTION, this.MIN_CIRC, this.MAX_CIRC);
 		partAnalyzers.analyze(imp);
-		Line lTube = partAnalyzers.getLTube();
-		Line rTube = partAnalyzers.getRTube();
+		Line lAxis = partAnalyzers.getLTube();
+		Line rAxis = partAnalyzers.getRTube();
+		ImageProcessor ip = imp.getProcessor();
+		Line lTube = findIntersect(ip, lAxis);
+		Line rTube = findIntersect(ip, rAxis);
+		
 		RoiManager roiManager = RoiManager.getRoiManager();
 		if (lTube != null)
 			roiManager.addRoi(lTube);
@@ -63,6 +67,27 @@ public class Recognize_tubes implements PlugIn {
 			roiManager.addRoi(rTube);
 		//imp.show();
 		imp.close();
+	}
+	
+	private Line findIntersect(ImageProcessor ip, Line axis) {
+		Point[] points = axis.getContainedPoints();
+		Point p1 = null;
+		Point p2 = null;
+		for (int i = 0; i < points.length; i++) {
+			Point p = points[i];
+			if (ip.getPixelValue(p.x, p.y) < 1) {
+				p1 = p;
+				break;
+			}
+		}
+		for (int i = points.length - 1; i > -1; i--) {
+			Point p = points[i];
+			if (ip.getPixelValue(p.x, p.y) < 1) {
+				p2 = p;
+				break;
+			}
+		}
+		return new Line(p1.x, p1.y, p2.x, p2.y);
 	}
 
 }

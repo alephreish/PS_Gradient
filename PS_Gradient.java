@@ -36,6 +36,9 @@ import java.util.ArrayList;
 import jMEF.*;
 import Tools.KMeans;
 
+import jMEF.BregmanHierarchicalClustering.LINKAGE_CRITERION;
+import jMEF.Clustering.CLUSTERING_TYPE;
+
 public class PS_Gradient implements PlugIn {
 
 	private Line rTube = null;
@@ -93,21 +96,21 @@ public class PS_Gradient implements PlugIn {
 
 	private boolean getTubes() {
 		RoiManager roiManager = RoiManager.getRoiManager();
-		int count = 0;
+		int n = 0;
 		for (Roi roi : roiManager.getRoisAsArray()) {
 			if (roi instanceof Line) {
-				if (count > 2) {
+				if (n > 2) {
 					IJ.error("PS Gradient", "More than two line ROIs found");
 					return false;
 				}
-				if (count == 0)
+				if (n == 0)
 					lTube = (Line)roi;
 				else
 					rTube = (Line)roi;
-				count++;
+				n++;
 			}
 		}
-		if (count != 2) {
+		if (n != 2) {
 			IJ.error("PS Gradient", "Two line ROIs expected");
 			return false;
 		}
@@ -126,21 +129,21 @@ public class PS_Gradient implements PlugIn {
 		int rSum = 0;
 		int gSum = 0;
 		int bSum = 0;
-		int count = 0;
+		int n = 0;
 
 		for (Point p : bkgdRoi.getContainedPoints()) {
-			count++;
+			n++;
 			int[] rgb = new int[3];
 			ip.getPixel(p.x, p.y, rgb);
 			rSum += rgb[0];
 			gSum += rgb[1];
 			bSum += rgb[2];
 		}
-		if (count == 0) {
+		if (n == 0) {
 			IJ.error("PS Gradient", "Couldn't find the background color");
 			return null;
 		}
-		return new Color(rSum/count, gSum/count, bSum/count);
+		return new Color(rSum/n, gSum/n, bSum/n);
 	}
 
 	private void PlotProfile(ImageProcessor ip, Line Tube, Plot profile, int shape) {
@@ -150,52 +153,85 @@ public class PS_Gradient implements PlugIn {
 		Color[] colors = new Color[]{ Color.CYAN, Color.MAGENTA, Color.YELLOW };
 		double x0 = Pts[0].x;
 		double y0 = Pts[0].y;
-		int count = 0;
-		List<Double> sample = new ArrayList<Double>();
+		int n = 0;
 		for (Point p : Pts) {
 			int[] rgb = new int[3];
 			ip.getPixel(p.x, p.y, rgb);
 			double dx = x0 - p.x;
 			double dy = y0 - p.y;
-			distances[count] = Math.sqrt(dx*dx + dy*dy);
+			distances[n] = Math.sqrt(dx*dx + dy*dy);
 			for (int i = 0; i < this.COLOR_NUM; i++) {
-				intensities[i][count] = (double)rgb[i];
+				intensities[i][n] = (double)rgb[i];
 			}
-			sample.addAll(Collections.nCopies(rgb[0], distances[count]));
-			count++;
-		}
-		PVector[] points = new PVector[sample.size()];
-		count = 0;
-		IJ.log(String.format("Sample size %d", sample.size()));
-		for (Double s : sample) {
-			PVector point = new PVector(1);
-			point.array[0] = s;
-			points[count] = point;
-			count++;
+			n++;
 		}
 
 		for (int i = 0; i < this.COLOR_NUM; i++) {
+
 			profile.setColor(colors[i]);
 			profile.addPoints(distances, intensities[i], Plot.LINE);
 
-			int[] maxima = MaximumFinder.findMaxima(intensities[i], this.TOLERANCE_MAXIMA, true);
-			double[] maxD = new double[maxima.length];
-			double[] maxI = new double[maxima.length];
-			for (int j = 0; j < maxima.length; j++) {
-				int maximum = maxima[j];
-				maxD[j] = distances[maximum];
-				maxI[j] = intensities[i][maximum];
+			int[] maxima = MaximumFinder.findMaxima(intensities[i], this.TOLERANCE_MAXIMA, false);
+			double maxDist = 0;
+			for (int max : maxima) {
+				if (distances[max] > maxDist) {
+					maxDist = distances[max];
+				}
+			}
+			double[] maxD = new double[maxima.length - 1];
+			double[] maxI = new double[maxima.length - 1];
+			n = 0;
+			for (int max : maxima) {
+				if (distances[max] < maxDist) {
+					maxD[n] = distances[max];
+					maxI[n] = intensities[i][max];
+					n++;
+				}
 			}
 			profile.setColor(Color.BLACK);
 			profile.addPoints(maxD, maxI, Plot.CIRCLE);
-		}
-		
-		Vector<PVector>[] clusters = KMeans.run(points, 4);
 
-		MixtureModel mmef;
-		mmef = BregmanSoftClustering.initialize(clusters, new UnivariateGaussian());
-		mmef = BregmanSoftClustering.run(points, mmef);
-		PlotGauss(profile, distances, mmef, sample.size());
+			List<Double> sample = new ArrayList<Double>();
+			for (int j = 0; j < distances.length; j++) {
+				if (distances[j] < maxDist) {
+					sample.addAll(Collections.nCopies((int)intensities[i][j], distances[j]));
+				}
+			}
+			MixtureModel mmef1 = findGauss(sample, 4);
+			//MixtureModel mmef2 = findOptimalGauss(sample);
+			plotGauss(profile, distances, mmef1, sample.size());
+		}
+	}
+
+	private MixtureModel findGauss(List<Double>sample, int components) {
+		PVector[] points = DoubletoPVector(sample);
+		Vector<PVector>[] clusters = KMeans.run(points, components);
+		MixtureModel mmef1 = BregmanSoftClustering.initialize(clusters, new UnivariateGaussian());
+		return BregmanSoftClustering.run(points, mmef1);
+	}
+
+	private MixtureModel findOptimalGauss(List<Double>sample) {
+		int components1 = 6;
+		MixtureModel mm1 = findGauss(sample, components1);
+		HierarchicalMixtureModel hmm = BregmanHierarchicalClustering.build(mm1, CLUSTERING_TYPE.SYMMETRIC, LINKAGE_CRITERION.MAXIMUM_DISTANCE);
+		MixtureModel mm2 = hmm.getOptimalMixtureModel(0.5);
+		int componentsOpt = mm2.size + 2;
+		if (components1 == componentsOpt) {
+			return mm1;
+		} else {
+			return findGauss(sample, componentsOpt);
+		}
+	}
+
+	private PVector[] DoubletoPVector(List<Double> sample) {
+		int size = sample.size();
+		PVector[] points = new PVector[size];
+		for (int i = 0; i < size; i++) {
+			PVector point = new PVector(1);
+			point.array[0] = sample.get(i);
+			points[i] = point;
+		}
+		return points;
 	}
 
 	private double Gauss(double x, double w, double a, double s2) {
@@ -203,20 +239,20 @@ public class PS_Gradient implements PlugIn {
 		return w * Math.exp( - dx*dx / s2 / 2 ) / Math.sqrt(2 * Math.PI * s2);
 	}
 
-	private void PlotGauss(Plot profile, double[] distances, MixtureModel mm, int scale) {
+	private void plotGauss(Plot profile, double[] distances, MixtureModel mm, int scale) {
 		for (int i = 0; i < mm.size; i++) {
 			PVector params = (PVector)mm.param[i];
 			double w  = scale * mm.weight[i];
 			double a  = params.array[0];
 			double s2 = params.array[1];
-			int count = 0;
+			int n = 0;
 			double[] intensities = new double[distances.length];
 			for (int j = 0; j < distances.length; j++) {
 				intensities[j] = Gauss(distances[j], w, a, s2);
 			}
-			IJ.log(String.format("Component %d", i));
-			IJ.log(String.format("Weight %f", w));
-			IJ.log(String.format("Points %d", distances.length));
+//			IJ.log(String.format("Component %d", i));
+//			IJ.log(String.format("Weight %f", w));
+//			IJ.log(String.format("Points %d", distances.length));
 			profile.setColor(Color.BLACK);
 			profile.addPoints(distances, intensities, Plot.LINE);
 		}
